@@ -2,7 +2,7 @@
   "name": "verify-bot",
   "version": "1.0.0",
   "private": true,
-  "description": "Simple Discord bot that posts a message with a Verify button and grants a role when it is clicked.",
+  "description": "One Discord bot for the server: verification panel plus slash-command moderation.",
   "type": "module",
   "main": "src/index.js",
   "engines": { "node": ">=22.5.0" },

@@ -39,6 +39,8 @@ export function getGuildConfig(guildId) {
     roleId: stored.roleId ?? process.env.VERIFY_ROLE_ID ?? null,
     panelChannelId: stored.panelChannelId ?? process.env.VERIFY_PANEL_CHANNEL_ID ?? null,
     logChannelId: stored.logChannelId ?? process.env.VERIFY_LOG_CHANNEL_ID ?? null,
+    modLogChannelId: stored.modLogChannelId ?? process.env.MOD_LOG_CHANNEL_ID ?? null,
+    dmNotices: stored.dmNotices ?? process.env.MOD_DM_NOTICES !== "false",
     title: stored.title ?? process.env.VERIFY_TITLE ?? "Verify yourself",
     description:
       stored.description ??
@@ -57,3 +59,72 @@ export function setGuildConfig(guildId, patch) {
   writeStore(store);
   return getGuildConfig(guildId);
 }
+
+// Moderation records share this file with the verify settings. They are capped so the
+// JSON cannot grow without bound; the mod-log channel is the long term record.
+
+const MAX_WARNINGS = 100;
+const MAX_CASES = 200;
+
+/** Read a guild's raw record buckets, creating them on first use. */
+const bucket = (store, guildId, key) => {
+  const guild = (store.guilds[guildId] ??= {});
+  if (!Array.isArray(guild[key])) guild[key] = [];
+  return guild[key];
+};
+
+/** Case and warning numbers are a single counter per guild so they read like ticket numbers. */
+const nextId = (store, guildId) => {
+  const guild = (store.guilds[guildId] ??= {});
+  const id = (Number.isInteger(guild.nextId) ? guild.nextId : 0) + 1;
+  guild.nextId = id;
+  return id;
+};
+
+const list = (store, guildId, key) => {
+  const rows = bucket(store, guildId, key);
+  return Array.isArray(rows) ? rows : [];
+};
+
+/** Record a warning against a member and keep the most recent ones. */
+export function addWarning(guildId, { userId, moderatorId, reason }) {
+  const store = readStore();
+  const warning = { id: nextId(store, guildId), userId, moderatorId, reason, createdAt: Date.now() };
+  bucket(store, guildId, "warnings").push(warning);
+  store.guilds[guildId].warnings = store.guilds[guildId].warnings.slice(-MAX_WARNINGS);
+  writeStore(store);
+  return warning;
+}
+
+/** A member's active warnings, oldest first. */
+export function listWarnings(guildId, userId) {
+  return list(readStore(), guildId, "warnings").filter((w) => w.userId === userId);
+}
+
+/** Drop every warning for a member and report how many went. */
+export function clearWarnings(guildId, userId) {
+  const store = readStore();
+  const warnings = bucket(store, guildId, "warnings");
+  const before = warnings.length;
+  store.guilds[guildId].warnings = warnings.filter((w) => w.userId !== userId);
+  const removed = before - store.guilds[guildId].warnings.length;
+  if (removed) writeStore(store);
+  return removed;
+}
+
+/** Store one moderation action. */
+export function recordCase(guildId, { action, targetId, moderatorId, reason }) {
+  const store = readStore();
+  const entry = { id: nextId(store, guildId), action, targetId, moderatorId, reason, createdAt: Date.now() };
+  bucket(store, guildId, "cases").push(entry);
+  store.guilds[guildId].cases = store.guilds[guildId].cases.slice(-MAX_CASES);
+  writeStore(store);
+  return entry;
+}
+
+/** Recent cases, newest first. Pass userId to filter down to one member. */
+export function listCases(guildId, { userId = null, limit = 25 } = {}) {
+  const rows = list(readStore(), guildId, "cases").filter((c) => !userId || c.targetId === userId);
+  return rows.slice(-limit).reverse();
+}
+

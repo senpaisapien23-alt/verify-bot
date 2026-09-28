@@ -2,6 +2,7 @@ import "dotenv/config";
 import { Client, Events, GatewayIntentBits, MessageFlags } from "discord.js";
 import { commandData } from "./commands.js";
 import { getGuildConfig, setGuildConfig } from "./config.js";
+import { runModeration } from "./moderation.js";
 import { buildPanel, handleVerifyClick } from "./verify.js";
 
 if (!process.env.DISCORD_TOKEN) {
@@ -99,14 +100,14 @@ async function runVerifyCommand(interaction) {
 }
 
 client.once(Events.ClientReady, async (ready) => {
-  console.log(`Verify bot ready as ${ready.user.tag}`);
-  ready.user.setActivity("click ✅ to verify", { type: 3 });
+  console.log(`Bot ready as ${ready.user.tag} (verification + moderation)`);
+  ready.user.setActivity("/verify and /mod", { type: 3 });
 
   if (process.env.REGISTER_ON_START !== "false") {
     const target = process.env.GUILD_ID || null;
     await client.application.commands
       .set(commandData(), target)
-      .then(() => console.log(`Registered /verify ${target ? `in guild ${target}` : "globally"}.`))
+      .then(() => console.log(`Registered /verify and /mod ${target ? `in guild ${target}` : "globally"}.`))
       .catch((error) => console.error("Slash registration failed:", error));
   }
 
@@ -127,16 +128,27 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await runVerifyCommand(interaction);
       return;
     }
+    if (interaction.isChatInputCommand() && interaction.commandName === "mod") {
+      if (!interaction.inGuild()) {
+        return interaction.reply({ content: "That only works inside a server.", flags: MessageFlags.Ephemeral });
+      }
+      // runModeration defers the reply itself, so the answer lands with editReply.
+      await interaction.editReply(await runModeration(interaction));
+      return;
+    }
     if (interaction.isButton() && interaction.customId === "verify:grant") {
       await handleVerifyClick(interaction, getGuildConfig(interaction.guildId));
     }
   } catch (error) {
     console.error("[interaction] handler failed:", error);
-    if (interaction.isRepliable()) {
-      await interaction
-        .reply({ content: "Something went wrong. Please try again.", flags: MessageFlags.Ephemeral })
-        .catch(() => {});
-    }
+    if (!interaction.isRepliable()) return;
+    // Answering an interaction twice is what fills the log with 40060 errors, so pick
+    // whichever call is still legal: editReply after a defer, reply otherwise.
+    const pending = interaction.replied || interaction.deferred;
+    await (pending
+      ? interaction.editReply({ content: "Something went wrong while I was working on that. Please try again." })
+      : interaction.reply({ content: "Something went wrong. Please try again.", flags: MessageFlags.Ephemeral })
+    ).catch(() => {});
   }
 });
 
