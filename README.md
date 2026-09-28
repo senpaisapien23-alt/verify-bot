@@ -91,6 +91,45 @@ default, so one instance can serve several servers.
 | `VERIFY_COLOR` | Embed colour, e.g. `0x57f287`. |
 | `AUTO_POST_GUILD_ID` / `AUTO_POST_CHANNEL_ID` | Post the panel on every restart. |
 
+## Deploying to Railway
+
+The bot needs no code changes to run on Railway. Import the repo, and Railway's
+Nixpacks builder will detect Node and run `npm start` (see `railway.json`).
+
+Set these as Railway variables:
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `DISCORD_TOKEN` | yes | Without it the process exits immediately. |
+| `GUILD_ID` | recommended | Registers `/verify` instantly instead of globally. |
+| `REGISTER_ON_START` | no | `false` skips re-registering on every boot. |
+| `VERIFY_ROLE_ID` | see below | Role the button grants. |
+| `VERIFY_PANEL_CHANNEL_ID` | see below | Where the panel is posted. |
+
+### Read this before you rely on `/verify role`
+
+Per-guild settings are saved with `writeFileSync` to `data/config.json` (see
+`src/config.js`). **Railway's filesystem is ephemeral — that file is wiped on
+every redeploy and every restart.** After a restart the bot forgets which role
+it was handing out, and the button replies *"Verification is not set up right
+now."*
+
+You have two ways to deal with it:
+
+1. **Set `VERIFY_ROLE_ID` and `VERIFY_PANEL_CHANNEL_ID` in Railway variables.**
+   These are the fallbacks in `getGuildConfig`, so the bot works from a cold
+   start with no file at all. This is the simple path and it is fine for one
+   server. This is what most people want.
+
+2. **Mount a Railway Volume** and point `STORE_PATH` at it, e.g. a volume at
+   `/data` with `STORE_PATH=/data/config.json`. The file then survives
+   restarts and `/verify role` keeps working across deploys. Worth it only if
+   you actually serve several servers from one instance.
+
+Note that the role ID lives in the file *and* the env var, and the file wins
+(`stored.roleId ?? process.env.VERIFY_ROLE_ID`). With option 1 the file is
+always empty after a restart, so the env var is what applies.
+
 ## Tests
 
 ```bash
